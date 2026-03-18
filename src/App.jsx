@@ -35,12 +35,12 @@ import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
 // Cấu hình Firebase
 const firebaseConfig = {
-  apiKey: 'AIzaSyCa-bC8UrfSX_Ir0_2vXTAlBS10Hzr7RDI',
-  authDomain: 'quanlymatkhau.firebaseapp.com',
-  projectId: 'quanlymatkhau',
-  storageBucket: 'quanlymatkhau.firebasestorage.app',
-  messagingSenderId: '144750647329',
-  appId: '1:144750647329:web:fd6dbe1ca10b652f21eb60',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);
