@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Lock, Unlock, Shield, Key, Plus, Copy, Eye, EyeOff, 
   Trash2, Search, Check, AlertTriangle, RefreshCw, X, Save,
-  Cloud, LogOut, User, Loader2, Fingerprint
+  Cloud, LogOut, User, Loader2, Fingerprint, Download, Upload
 } from 'lucide-react';
 
 // --- FIREBASE SETUP ---
@@ -137,7 +137,6 @@ export default function App() {
       setHasBiometricSaved(true);
       showToast("Đã thiết lập Face ID/Vân tay thành công!");
     } catch (err) {
-      console.error("Lỗi sinh trắc học:", err);
       showToast("Hủy thao tác hoặc thiết bị không hỗ trợ.");
     }
   };
@@ -163,7 +162,6 @@ export default function App() {
         setAuthError("Không tìm thấy dữ liệu sinh trắc học. Vui lòng nhập mật khẩu.");
       }
     } catch (err) {
-      console.error("Lỗi xác thực:", err);
       setAuthError("Xác thực khuôn mặt/vân tay thất bại.");
     }
   };
@@ -216,7 +214,6 @@ export default function App() {
         setAppState('SETUP');
       }
     }, (error) => {
-      console.error("Lỗi đồng bộ:", error);
       showToast("Lỗi kết nối máy chủ dữ liệu! Hãy kiểm tra lại cấu hình Firebase.");
     });
 
@@ -249,15 +246,15 @@ export default function App() {
   };
 
   const handleGoogleLogin = async () => {
+    setAuthError('');
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
     } catch (error) {
-      console.error("Lỗi đăng nhập Google:", error);
       if (error.code === 'auth/unauthorized-domain') {
-        showToast("Lỗi: Tên miền chưa được cấp phép trong Firebase.");
+        setAuthError("Tên miền này chưa được cấp phép. Vui lòng thêm tên miền hiện tại vào mục Authorized domains trong Firebase Console.");
       } else {
-        showToast("Lỗi đăng nhập Google: " + error.message);
+        setAuthError("Lỗi đăng nhập: " + error.message);
       }
     }
   };
@@ -284,6 +281,58 @@ export default function App() {
     setAppState('UNLOCK');
     setMasterPasswordInput('');
     showToast("Đã khóa kho an toàn.");
+  };
+
+  // --- CHỨC NĂNG SAO LƯU & PHỤC HỒI ---
+  const exportBackup = () => {
+    if (!encryptedCloudData) {
+      showToast("Không có dữ liệu để sao lưu!");
+      return;
+    }
+    const dataStr = JSON.stringify(encryptedCloudData);
+    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+    const exportFileDefaultName = `SecureVault_Backup_${new Date().toISOString().split('T')[0]}.json`;
+
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
+    showToast("Đã tải xuống file sao lưu an toàn!");
+  };
+
+  const handleImportBackup = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const content = e.target.result;
+        const parsedData = JSON.parse(content);
+
+        if (!parsedData.salt || !parsedData.iv || !parsedData.data) {
+          throw new Error("File không hợp lệ");
+        }
+
+        if (!window.confirm("CẢNH BÁO: Phục hồi sẽ GHI ĐÈ toàn bộ mật khẩu hiện tại trên đám mây bằng dữ liệu từ file này. Bạn có chắc chắn?")) {
+          event.target.value = null;
+          return;
+        }
+
+        setIsSyncing(true);
+        const docRef = getVaultDocRef(user.uid);
+        await setDoc(docRef, parsedData);
+        
+        showToast("Phục hồi thành công! Vui lòng mở khóa lại.");
+        handleLock(); // Bắt buộc người dùng nhập lại mật khẩu chính của bản backup để giải mã
+      } catch (err) {
+        showToast("Lỗi: File sao lưu không hợp lệ hoặc bị hỏng.");
+      } finally {
+        setIsSyncing(false);
+        event.target.value = null; 
+      }
+    };
+    reader.readAsText(file);
   };
 
   const saveVaultToCloud = async (newVault, currentKey, currentSalt) => {
@@ -403,6 +452,14 @@ export default function App() {
           <p className="text-slate-400 mb-8 text-sm">
             Quản lý mật khẩu an toàn. Đồng bộ đám mây với chuẩn mã hóa quân đội.
           </p>
+
+          {authError && (
+            <div className="bg-red-500/10 border border-red-500/50 p-3 rounded-lg mb-6 flex items-start text-left">
+              <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5 mr-3 flex-shrink-0" />
+              <p className="text-red-400 text-sm">{authError}</p>
+            </div>
+          )}
+
           <button 
             onClick={handleGoogleLogin}
             className="w-full bg-white text-slate-900 hover:bg-slate-100 font-bold py-3 px-4 rounded-lg transition-colors flex items-center justify-center shadow-lg"
@@ -565,6 +622,15 @@ export default function App() {
                 </button>
               )}
 
+              {/* Nút Sao lưu & Phục hồi trên Desktop */}
+              <button onClick={exportBackup} title="Tải file Sao lưu" className="p-2 text-blue-400 hover:bg-slate-700 rounded-lg hidden sm:block">
+                <Download className="w-5 h-5" />
+              </button>
+              <button onClick={() => document.getElementById('backup-upload').click()} title="Phục hồi từ file" className="p-2 text-amber-400 hover:bg-slate-700 rounded-lg hidden sm:block">
+                <Upload className="w-5 h-5" />
+              </button>
+              <input type="file" id="backup-upload" accept=".json" style={{ display: 'none' }} onChange={handleImportBackup} />
+
               <button onClick={handleLock} className="p-2 text-slate-300 hover:bg-slate-700 rounded-lg">
                 <Lock className="w-5 h-5" />
               </button>
@@ -582,6 +648,14 @@ export default function App() {
           <h2 className="text-xl md:text-2xl font-bold text-white">Mật khẩu của bạn</h2>
           
           <div className="flex space-x-2">
+            {/* Nút Sao lưu & Phục hồi cho Mobile */}
+            <button onClick={exportBackup} title="Sao lưu" className="md:hidden flex bg-slate-800 text-blue-400 border border-blue-500/30 px-3 py-2 rounded-lg font-medium items-center">
+              <Download className="w-5 h-5" />
+            </button>
+            <button onClick={() => document.getElementById('backup-upload').click()} title="Phục hồi" className="md:hidden flex bg-slate-800 text-amber-400 border border-amber-500/30 px-3 py-2 rounded-lg font-medium items-center">
+              <Upload className="w-5 h-5" />
+            </button>
+
             {isBiometricSupported && !hasBiometricSaved && (
               <button onClick={enableBiometric} title="Bật Sinh trắc học" className="md:hidden flex bg-slate-800 text-emerald-400 border border-emerald-500/30 px-3 py-2 rounded-lg font-medium items-center">
                 <Fingerprint className="w-5 h-5" />
