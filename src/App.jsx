@@ -1,46 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import {
-  Lock,
-  Unlock,
-  Shield,
-  Key,
-  Plus,
-  Copy,
-  Eye,
-  EyeOff,
-  Trash2,
-  Search,
-  Check,
-  AlertTriangle,
-  RefreshCw,
-  X,
-  Save,
-  Cloud,
-  LogOut,
-  User,
-  Loader2,
+import { 
+  Lock, Unlock, Shield, Key, Plus, Copy, Eye, EyeOff, 
+  Trash2, Search, Check, AlertTriangle, RefreshCw, X, Save,
+  Cloud, LogOut, User, Loader2, Fingerprint
 } from 'lucide-react';
 
 // --- FIREBASE SETUP ---
 import { initializeApp } from 'firebase/app';
-import {
-  getAuth,
-  signInWithPopup,
-  GoogleAuthProvider,
-  onAuthStateChanged,
-  signOut,
-  signInAnonymously,
-} from 'firebase/auth';
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
 // Cấu hình Firebase
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
+  apiKey: "AIzaSyCa-bC8UrfSX_Ir0_2vXTAlBS10Hzr7RDI",
+  authDomain: "quanlymatkhau.firebaseapp.com",
+  projectId: "quanlymatkhau",
+  storageBucket: "quanlymatkhau.firebasestorage.app",
+  messagingSenderId: "144750647329",
+  appId: "1:144750647329:web:fd6dbe1ca10b652f21eb60"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -53,8 +30,7 @@ const getVaultDocRef = (userId) => {
 };
 
 // --- HÀM HỖ TRỢ CHUYỂN ĐỔI BASE64 VÀ ARRAYBUFFER ---
-const buf2b64 = (buf) =>
-  btoa(String.fromCharCode.apply(null, new Uint8Array(buf)));
+const buf2b64 = (buf) => btoa(String.fromCharCode.apply(null, new Uint8Array(buf)));
 const b642buf = (b64) => {
   const binary_string = atob(b64);
   const len = binary_string.length;
@@ -70,21 +46,21 @@ const ITERATIONS = 100000;
 
 const getPasswordKey = (password) => {
   return window.crypto.subtle.importKey(
-    'raw',
+    "raw",
     new TextEncoder().encode(password),
-    { name: 'PBKDF2' },
+    { name: "PBKDF2" },
     false,
-    ['deriveKey']
+    ["deriveKey"]
   );
 };
 
 const deriveKey = async (passwordKey, salt) => {
   return window.crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: salt, iterations: ITERATIONS, hash: 'SHA-256' },
+    { name: "PBKDF2", salt: salt, iterations: ITERATIONS, hash: "SHA-256" },
     passwordKey,
-    { name: 'AES-GCM', length: 256 },
+    { name: "AES-GCM", length: 256 },
     false,
-    ['encrypt', 'decrypt']
+    ["encrypt", "decrypt"]
   );
 };
 
@@ -92,7 +68,7 @@ const encryptData = async (data, key) => {
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
   const encodedData = new TextEncoder().encode(JSON.stringify(data));
   const ciphertext = await window.crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv },
+    { name: "AES-GCM", iv: iv },
     key,
     encodedData
   );
@@ -101,7 +77,7 @@ const encryptData = async (data, key) => {
 
 const decryptData = async (ciphertext, iv, key) => {
   const decrypted = await window.crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: iv },
+    { name: "AES-GCM", iv: iv },
     key,
     ciphertext
   );
@@ -112,21 +88,105 @@ const decryptData = async (ciphertext, iv, key) => {
 export default function App() {
   const [user, setUser] = useState(null);
   const [appState, setAppState] = useState('CHECKING_AUTH'); // CHECKING_AUTH, LOGIN, CHECKING_DATA, SETUP, UNLOCK, READY
-
+  
   const [masterKey, setMasterKey] = useState(null);
   const [vaultSalt, setVaultSalt] = useState(null);
   const [vault, setVault] = useState([]);
   const [encryptedCloudData, setEncryptedCloudData] = useState(null);
-
+  
   const [masterPasswordInput, setMasterPasswordInput] = useState('');
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [authError, setAuthError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-
+  
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // --- TRẠNG THÁI SINH TRẮC HỌC (FACE ID / VÂN TAY) ---
+  const [isBiometricSupported, setIsBiometricSupported] = useState(false);
+  const [hasBiometricSaved, setHasBiometricSaved] = useState(!!localStorage.getItem('sv_biometric_pwd'));
+
+  useEffect(() => {
+    // Kiểm tra xem thiết bị hiện tại có hỗ trợ nhận diện khuôn mặt/vân tay không
+    if (window.PublicKeyCredential) {
+      window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+        .then(available => setIsBiometricSupported(available));
+    }
+  }, []);
+
+  const enableBiometric = async () => {
+    try {
+      const challenge = window.crypto.getRandomValues(new Uint8Array(32));
+      const userId = window.crypto.getRandomValues(new Uint8Array(16));
+      const publicKey = {
+        challenge: challenge,
+        rp: { name: "SecureVault", id: window.location.hostname },
+        user: { id: userId, name: user.email, displayName: user.email },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+        authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required" },
+        timeout: 60000,
+      };
+      
+      // Gọi màn hình quét khuôn mặt/vân tay của điện thoại
+      await navigator.credentials.create({ publicKey });
+      
+      // Nếu quét thành công, lưu mật khẩu vào LocalStorage (Được bảo vệ bởi lớp Sinh trắc học)
+      localStorage.setItem('sv_biometric_pwd', masterPasswordInput);
+      setHasBiometricSaved(true);
+      showToast("Đã thiết lập Face ID/Vân tay thành công!");
+    } catch (err) {
+      console.error("Lỗi sinh trắc học:", err);
+      showToast("Hủy thao tác hoặc thiết bị không hỗ trợ.");
+    }
+  };
+
+  const handleBiometricUnlock = async () => {
+    try {
+      setAuthError('');
+      const challenge = window.crypto.getRandomValues(new Uint8Array(32));
+      const publicKey = {
+        challenge: challenge,
+        rpId: window.location.hostname,
+        userVerification: "required",
+      };
+      
+      // Gọi màn hình quét khuôn mặt/vân tay để xác thực
+      await navigator.credentials.get({ publicKey });
+      
+      // Nếu đúng khuôn mặt, lấy mật khẩu chính đã lưu để giải mã
+      const savedPwd = localStorage.getItem('sv_biometric_pwd');
+      if (savedPwd) {
+        await processUnlock(savedPwd);
+      } else {
+        setAuthError("Không tìm thấy dữ liệu sinh trắc học. Vui lòng nhập mật khẩu.");
+      }
+    } catch (err) {
+      console.error("Lỗi xác thực:", err);
+      setAuthError("Xác thực khuôn mặt/vân tay thất bại.");
+    }
+  };
+
+  // Hàm xử lý giải mã được tách ra để tái sử dụng
+  const processUnlock = async (password) => {
+    if (!encryptedCloudData) throw new Error("No data");
+    const salt = b642buf(encryptedCloudData.salt);
+    const iv = b642buf(encryptedCloudData.iv);
+    const ciphertext = b642buf(encryptedCloudData.data);
+    
+    const pwdKey = await getPasswordKey(password);
+    const key = await deriveKey(pwdKey, salt);
+    
+    const decryptedVault = await decryptData(ciphertext, iv, key);
+    
+    setVaultSalt(salt);
+    setMasterKey(key);
+    setVault(decryptedVault);
+    setAppState('READY');
+    setMasterPasswordInput(password); // Giữ lại password để có thể thiết lập Sinh trắc học
+    showToast("Đã mở khóa!");
+  };
 
   // 1. Lắng nghe trạng thái đăng nhập Firebase
   useEffect(() => {
@@ -147,26 +207,18 @@ export default function App() {
     if (!user || appState === 'LOGIN' || appState === 'CHECKING_AUTH') return;
 
     const docRef = getVaultDocRef(user.uid);
-    const unsubscribe = onSnapshot(
-      docRef,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setEncryptedCloudData(data);
-          setAppState((prev) =>
-            prev === 'CHECKING_DATA' || prev === 'READY' ? 'UNLOCK' : prev
-          );
-        } else {
-          setAppState('SETUP');
-        }
-      },
-      (error) => {
-        console.error('Lỗi đồng bộ:', error);
-        showToast(
-          'Lỗi kết nối máy chủ dữ liệu! Hãy kiểm tra lại cấu hình Firebase.'
-        );
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setEncryptedCloudData(data);
+        setAppState(prev => (prev === 'CHECKING_DATA' || prev === 'READY' ? 'UNLOCK' : prev));
+      } else {
+        setAppState('SETUP');
       }
-    );
+    }, (error) => {
+      console.error("Lỗi đồng bộ:", error);
+      showToast("Lỗi kết nối máy chủ dữ liệu! Hãy kiểm tra lại cấu hình Firebase.");
+    });
 
     return () => unsubscribe();
   }, [user]);
@@ -178,22 +230,19 @@ export default function App() {
 
   const copyToClipboard = (text) => {
     if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard
-        .writeText(text)
-        .then(() => {
-          showToast('Đã sao chép!');
-        })
-        .catch((err) => showToast('Lỗi sao chép!'));
+      navigator.clipboard.writeText(text).then(() => {
+        showToast("Đã sao chép!");
+      }).catch(err => showToast("Lỗi sao chép!"));
     } else {
-      const textArea = document.createElement('textarea');
+      const textArea = document.createElement("textarea");
       textArea.value = text;
       document.body.appendChild(textArea);
       textArea.select();
       try {
         document.execCommand('copy');
-        showToast('Đã sao chép!');
+        showToast("Đã sao chép!");
       } catch (err) {
-        showToast('Lỗi sao chép!');
+        showToast("Lỗi sao chép!");
       }
       document.body.removeChild(textArea);
     }
@@ -204,22 +253,12 @@ export default function App() {
     try {
       await signInWithPopup(auth, provider);
     } catch (error) {
-      console.error('Lỗi đăng nhập Google:', error);
+      console.error("Lỗi đăng nhập Google:", error);
       if (error.code === 'auth/unauthorized-domain') {
-        showToast('Lỗi: Tên miền chưa được cấp phép trong Firebase.');
+        showToast("Lỗi: Tên miền chưa được cấp phép trong Firebase.");
       } else {
-        showToast('Lỗi popup Google. Hãy thử Đăng nhập Ẩn danh.');
+        showToast("Lỗi đăng nhập Google: " + error.message);
       }
-    }
-  };
-
-  const handleAnonymousLogin = async () => {
-    try {
-      await signInAnonymously(auth);
-      showToast('Đã đăng nhập ẩn danh!');
-    } catch (error) {
-      console.error('Lỗi đăng nhập ẩn danh:', error);
-      showToast('Vui lòng bật tính năng Anonymous Auth trên Firebase!');
     }
   };
 
@@ -232,9 +271,9 @@ export default function App() {
       setEncryptedCloudData(null);
       setMasterPasswordInput('');
       setAppState('LOGIN');
-      showToast('Đã đăng xuất');
+      showToast("Đã đăng xuất");
     } catch (error) {
-      showToast('Lỗi đăng xuất!');
+      showToast("Lỗi đăng xuất!");
     }
   };
 
@@ -244,7 +283,7 @@ export default function App() {
     setVault([]);
     setAppState('UNLOCK');
     setMasterPasswordInput('');
-    showToast('Đã khóa kho an toàn.');
+    showToast("Đã khóa kho an toàn.");
   };
 
   const saveVaultToCloud = async (newVault, currentKey, currentSalt) => {
@@ -260,7 +299,7 @@ export default function App() {
         salt: buf2b64(activeSalt),
         iv: buf2b64(iv),
         data: buf2b64(ciphertext),
-        updatedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
 
       const docRef = getVaultDocRef(user.uid);
@@ -268,7 +307,7 @@ export default function App() {
 
       setVault(newVault);
     } catch (err) {
-      showToast('Lỗi đồng bộ!');
+      showToast("Lỗi đồng bộ!");
     } finally {
       setIsSyncing(false);
     }
@@ -277,11 +316,11 @@ export default function App() {
   const handleSetup = async (e) => {
     e.preventDefault();
     if (masterPasswordInput !== confirmPasswordInput) {
-      setAuthError('Mật khẩu xác nhận không khớp!');
+      setAuthError("Mật khẩu xác nhận không khớp!");
       return;
     }
     if (masterPasswordInput.length < 8) {
-      setAuthError('Mật khẩu phải có ít nhất 8 ký tự!');
+      setAuthError("Mật khẩu phải có ít nhất 8 ký tự!");
       return;
     }
 
@@ -289,20 +328,20 @@ export default function App() {
       const salt = window.crypto.getRandomValues(new Uint8Array(16));
       const pwdKey = await getPasswordKey(masterPasswordInput);
       const key = await deriveKey(pwdKey, salt);
-
+      
       setVaultSalt(salt);
       setMasterKey(key);
-
+      
       const initialVault = [];
       await saveVaultToCloud(initialVault, key, salt);
-
+      
       setAppState('READY');
       setMasterPasswordInput('');
       setConfirmPasswordInput('');
       setAuthError('');
-      showToast('Khởi tạo thành công!');
+      showToast("Khởi tạo thành công!");
     } catch (err) {
-      setAuthError('Lỗi thiết lập mã hóa.');
+      setAuthError("Lỗi thiết lập mã hóa.");
     }
   };
 
@@ -310,51 +349,34 @@ export default function App() {
     e.preventDefault();
     setAuthError('');
     try {
-      if (!encryptedCloudData) throw new Error('No data');
-
-      const salt = b642buf(encryptedCloudData.salt);
-      const iv = b642buf(encryptedCloudData.iv);
-      const ciphertext = b642buf(encryptedCloudData.data);
-
-      const pwdKey = await getPasswordKey(masterPasswordInput);
-      const key = await deriveKey(pwdKey, salt);
-
-      const decryptedVault = await decryptData(ciphertext, iv, key);
-
-      setVaultSalt(salt);
-      setMasterKey(key);
-      setVault(decryptedVault);
-      setAppState('READY');
-      setMasterPasswordInput('');
-      showToast('Đã mở khóa!');
+      await processUnlock(masterPasswordInput);
     } catch (err) {
-      setAuthError('Sai mật khẩu chính!');
+      setAuthError("Sai mật khẩu chính!");
     }
   };
 
   const handleSaveItem = async (item) => {
     let newVault;
     if (editingItem) {
-      newVault = vault.map((v) => (v.id === item.id ? item : v));
+      newVault = vault.map(v => v.id === item.id ? item : v);
     } else {
       newVault = [...vault, { ...item, id: crypto.randomUUID() }];
     }
     await saveVaultToCloud(newVault);
     setShowAddModal(false);
     setEditingItem(null);
-    showToast('Đã lưu & đồng bộ!');
+    showToast("Đã lưu & đồng bộ!");
   };
 
   const handleDeleteItem = async (id) => {
-    const newVault = vault.filter((v) => v.id !== id);
+    const newVault = vault.filter(v => v.id !== id);
     await saveVaultToCloud(newVault);
-    showToast('Đã xóa!');
+    showToast("Đã xóa!");
   };
 
-  const filteredVault = vault.filter(
-    (item) =>
-      item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.username.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredVault = vault.filter(item => 
+    item.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    item.username.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   // --- RENDER SCREENS ---
@@ -363,9 +385,7 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-sans text-slate-100">
         <Loader2 className="w-12 h-12 text-blue-500 animate-spin mb-4" />
-        <p className="text-slate-400 font-medium">
-          Đang tải dữ liệu an toàn...
-        </p>
+        <p className="text-slate-400 font-medium">Đang tải dữ liệu an toàn...</p>
       </div>
     );
   }
@@ -383,15 +403,11 @@ export default function App() {
           <p className="text-slate-400 mb-8 text-sm">
             Quản lý mật khẩu an toàn. Đồng bộ đám mây với chuẩn mã hóa quân đội.
           </p>
-          <button
+          <button 
             onClick={handleGoogleLogin}
             className="w-full bg-white text-slate-900 hover:bg-slate-100 font-bold py-3 px-4 rounded-lg transition-colors flex items-center justify-center shadow-lg"
           >
-            <img
-              src="https://www.svgrepo.com/show/475656/google-color.svg"
-              className="w-6 h-6 mr-3"
-              alt="Google"
-            />
+            <img src="https://www.svgrepo.com/show/475656/google-color.svg" className="w-6 h-6 mr-3" alt="Google" />
             Đăng nhập với Google
           </button>
         </div>
@@ -408,59 +424,52 @@ export default function App() {
               <Shield className="w-8 h-8 text-blue-400" />
             </div>
             <div className="flex items-center space-x-2 text-sm text-slate-400 bg-slate-900 py-1 px-3 rounded-full border border-slate-700">
-              <User className="w-4 h-4 text-blue-400" />
+              <User className="w-4 h-4 text-blue-400" /> 
               <span className="truncate max-w-[120px]">{user?.email}</span>
             </div>
           </div>
-
+          
           <h1 className="text-xl font-bold mb-2">Tạo Mật Khẩu Chính</h1>
           <p className="text-slate-400 mb-6 text-sm">
             Hãy tạo <strong>Mật khẩu chính</strong> để mã hóa kho lưu trữ.
           </p>
-
+          
           <div className="bg-amber-900/30 border border-amber-700/50 p-4 rounded-lg mb-6 flex items-start">
             <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 mr-3 flex-shrink-0" />
             <p className="text-amber-200 text-xs">
-              <strong>Quan trọng:</strong> Tuyệt đối không được quên mật khẩu
-              này. Hệ thống không thể khôi phục nó giúp bạn.
+              <strong>Quan trọng:</strong> Tuyệt đối không được quên mật khẩu này. Hệ thống không thể khôi phục nó giúp bạn.
             </p>
           </div>
 
           <form onSubmit={handleSetup} className="space-y-4">
-            <input
-              type="password"
+            <input 
+              type="password" 
               value={masterPasswordInput}
               onChange={(e) => setMasterPasswordInput(e.target.value)}
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
               placeholder="Mật khẩu chính (ít nhất 8 ký tự)"
               required
             />
-            <input
-              type="password"
+            <input 
+              type="password" 
               value={confirmPasswordInput}
               onChange={(e) => setConfirmPasswordInput(e.target.value)}
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
               placeholder="Nhập lại mật khẩu"
               required
             />
-
-            {authError && (
-              <p className="text-red-400 text-sm text-center">{authError}</p>
-            )}
-
-            <button
-              type="submit"
+            
+            {authError && <p className="text-red-400 text-sm text-center">{authError}</p>}
+            
+            <button 
+              type="submit" 
               disabled={isSyncing}
               className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 px-4 rounded-lg flex items-center justify-center"
             >
-              {isSyncing ? (
-                <Loader2 className="w-5 h-5 animate-spin mr-2" />
-              ) : (
-                <Lock className="w-5 h-5 mr-2" />
-              )}
+              {isSyncing ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Lock className="w-5 h-5 mr-2" />}
               Bắt đầu mã hóa
             </button>
-            <button
+            <button 
               type="button"
               onClick={handleLogout}
               className="w-full bg-transparent text-slate-400 hover:text-white py-2 text-sm mt-2"
@@ -482,7 +491,7 @@ export default function App() {
               <Lock className="w-8 h-8 text-emerald-400" />
             </div>
             <div className="flex items-center space-x-2 text-sm text-slate-400 bg-slate-900 py-1 px-3 rounded-full border border-slate-700">
-              <Cloud className="w-4 h-4 text-emerald-400" />
+              <Cloud className="w-4 h-4 text-emerald-400" /> 
               <span className="truncate max-w-[100px]">{user?.email}</span>
             </div>
           </div>
@@ -492,32 +501,29 @@ export default function App() {
           </p>
 
           <form onSubmit={handleUnlock} className="space-y-6">
-            <input
-              type="password"
+            <input 
+              type="password" 
               value={masterPasswordInput}
               onChange={(e) => setMasterPasswordInput(e.target.value)}
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-emerald-500"
               placeholder="Mật khẩu chính"
-              required
-              autoFocus
+              required autoFocus
             />
-
-            {authError && (
-              <p className="text-red-400 text-sm text-center">{authError}</p>
-            )}
-
+            
+            {authError && <p className="text-red-400 text-sm text-center">{authError}</p>}
+            
             <div className="space-y-3">
-              <button
-                type="submit"
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 px-4 rounded-lg flex items-center justify-center"
-              >
+              <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 px-4 rounded-lg flex items-center justify-center">
                 <Unlock className="w-4 h-4 mr-2" /> Giải mã
               </button>
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="w-full bg-slate-700 hover:bg-slate-600 text-white font-medium py-3 px-4 rounded-lg flex items-center justify-center"
-              >
+              
+              {isBiometricSupported && hasBiometricSaved && (
+                <button type="button" onClick={handleBiometricUnlock} className="w-full bg-slate-800 hover:bg-slate-700 text-emerald-400 font-medium py-3 px-4 rounded-lg flex items-center justify-center border border-emerald-500/30">
+                  <Fingerprint className="w-5 h-5 mr-2" /> Mở khóa bằng Sinh trắc học
+                </button>
+              )}
+              
+              <button type="button" onClick={handleLogout} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-medium py-3 px-4 rounded-lg flex items-center justify-center">
                 <LogOut className="w-4 h-4 mr-2" /> Đăng xuất
               </button>
             </div>
@@ -535,38 +541,34 @@ export default function App() {
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-3">
               <Shield className="w-7 h-7 text-blue-500" />
-              <span className="font-bold text-lg text-white hidden sm:block">
-                SecureVault
-              </span>
+              <span className="font-bold text-lg text-white hidden sm:block">SecureVault</span>
             </div>
-
+            
             <div className="flex items-center space-x-2">
-              {isSyncing && (
-                <RefreshCw className="w-4 h-4 text-blue-400 animate-spin mr-2" />
-              )}
-
+              {isSyncing && <RefreshCw className="w-4 h-4 text-blue-400 animate-spin mr-2" />}
+              
               {/* Desktop Search */}
               <div className="relative hidden md:block mr-2">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Tìm kiếm..."
+                <input 
+                  type="text" 
+                  placeholder="Tìm kiếm..." 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="bg-slate-900 border border-slate-600 rounded-full pl-9 pr-4 py-1.5 text-sm focus:outline-none focus:border-blue-500 w-48 lg:w-64"
                 />
               </div>
 
-              <button
-                onClick={handleLock}
-                className="p-2 text-slate-300 hover:bg-slate-700 rounded-lg"
-              >
+              {isBiometricSupported && !hasBiometricSaved && (
+                <button onClick={enableBiometric} title="Bật Face ID / Vân tay" className="hidden md:flex p-2 text-emerald-400 hover:bg-slate-700 rounded-lg items-center text-sm font-medium border border-emerald-500/30 mr-1">
+                  <Fingerprint className="w-5 h-5" />
+                </button>
+              )}
+
+              <button onClick={handleLock} className="p-2 text-slate-300 hover:bg-slate-700 rounded-lg">
                 <Lock className="w-5 h-5" />
               </button>
-              <button
-                onClick={handleLogout}
-                className="p-2 text-red-400 hover:bg-red-900/30 rounded-lg"
-              >
+              <button onClick={handleLogout} className="p-2 text-red-400 hover:bg-red-900/30 rounded-lg">
                 <LogOut className="w-5 h-5" />
               </button>
             </div>
@@ -577,26 +579,29 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1 max-w-6xl mx-auto px-4 py-6 w-full mb-20 md:mb-6">
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl md:text-2xl font-bold text-white">
-            Mật khẩu của bạn
-          </h2>
-          <button
-            onClick={() => {
-              setEditingItem(null);
-              setShowAddModal(true);
-            }}
-            className="hidden md:flex bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-medium items-center shadow-lg shadow-blue-600/20"
-          >
-            <Plus className="w-5 h-5 mr-1" /> Thêm mới
-          </button>
+          <h2 className="text-xl md:text-2xl font-bold text-white">Mật khẩu của bạn</h2>
+          
+          <div className="flex space-x-2">
+            {isBiometricSupported && !hasBiometricSaved && (
+              <button onClick={enableBiometric} title="Bật Sinh trắc học" className="md:hidden flex bg-slate-800 text-emerald-400 border border-emerald-500/30 px-3 py-2 rounded-lg font-medium items-center">
+                <Fingerprint className="w-5 h-5" />
+              </button>
+            )}
+            <button 
+              onClick={() => { setEditingItem(null); setShowAddModal(true); }}
+              className="hidden md:flex bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-medium items-center shadow-lg shadow-blue-600/20"
+            >
+              <Plus className="w-5 h-5 mr-1" /> Thêm mới
+            </button>
+          </div>
         </div>
 
         {/* Mobile Search */}
         <div className="relative md:hidden mb-6">
           <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Tìm kiếm tài khoản..."
+          <input 
+            type="text" 
+            placeholder="Tìm kiếm tài khoản..." 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="bg-slate-800 border border-slate-700 rounded-xl pl-10 pr-4 py-3 w-full focus:outline-none focus:border-blue-500 text-slate-200"
@@ -607,20 +612,15 @@ export default function App() {
           <div className="text-center py-20 bg-slate-800/30 rounded-2xl border border-slate-700/50 border-dashed mt-4">
             <Key className="w-12 h-12 mx-auto text-slate-600 mb-4" />
             <h3 className="text-lg font-medium text-slate-300 mb-1">Trống</h3>
-            <p className="text-slate-500 text-sm">
-              Chưa có dữ liệu nào được lưu.
-            </p>
+            <p className="text-slate-500 text-sm">Chưa có dữ liệu nào được lưu.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredVault.map((item) => (
-              <PasswordCard
-                key={item.id}
-                item={item}
-                onEdit={() => {
-                  setEditingItem(item);
-                  setShowAddModal(true);
-                }}
+            {filteredVault.map(item => (
+              <PasswordCard 
+                key={item.id} 
+                item={item} 
+                onEdit={() => { setEditingItem(item); setShowAddModal(true); }}
                 onDelete={() => handleDeleteItem(item.id)}
                 onCopy={copyToClipboard}
               />
@@ -630,11 +630,8 @@ export default function App() {
       </main>
 
       {/* Nút Floating Action Button cho Mobile */}
-      <button
-        onClick={() => {
-          setEditingItem(null);
-          setShowAddModal(true);
-        }}
+      <button 
+        onClick={() => { setEditingItem(null); setShowAddModal(true); }}
         className="md:hidden fixed bottom-6 right-6 w-14 h-14 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-[0_4px_20px_rgba(37,99,235,0.5)] z-20"
       >
         <Plus className="w-6 h-6" />
@@ -642,7 +639,7 @@ export default function App() {
 
       {/* Modals & Toasts */}
       {showAddModal && (
-        <PasswordFormModal
+        <PasswordFormModal 
           item={editingItem}
           onClose={() => setShowAddModal(false)}
           onSave={handleSaveItem}
@@ -675,81 +672,47 @@ function PasswordCard({ item, onEdit, onDelete, onCopy }) {
             {initial}
           </div>
           <div className="truncate">
-            <h3 className="font-semibold text-slate-100 truncate text-base">
-              {item.title}
-            </h3>
+            <h3 className="font-semibold text-slate-100 truncate text-base">{item.title}</h3>
             <p className="text-xs text-slate-400 truncate">{item.username}</p>
           </div>
         </div>
         <div className="flex space-x-1 ml-2">
-          <button
-            onClick={onEdit}
-            className="p-2 text-slate-400 hover:text-blue-400 bg-slate-900/50 rounded-lg"
-          >
+          <button onClick={onEdit} className="p-2 text-slate-400 hover:text-blue-400 bg-slate-900/50 rounded-lg">
             Sửa
           </button>
           {!confirmDelete ? (
-            <button
-              onClick={() => setConfirmDelete(true)}
-              className="p-2 text-slate-400 hover:text-red-400 bg-slate-900/50 rounded-lg"
-            >
+            <button onClick={() => setConfirmDelete(true)} className="p-2 text-slate-400 hover:text-red-400 bg-slate-900/50 rounded-lg">
               <Trash2 className="w-4 h-4" />
             </button>
           ) : (
             <div className="flex space-x-1">
-              <button
-                onClick={onDelete}
-                className="px-2 py-1 text-white bg-red-600 rounded-lg text-xs font-bold"
-              >
-                XÓA
-              </button>
-              <button
-                onClick={() => setConfirmDelete(false)}
-                className="px-2 py-1 text-slate-300 bg-slate-600 rounded-lg text-xs"
-              >
-                Hủy
-              </button>
+              <button onClick={onDelete} className="px-2 py-1 text-white bg-red-600 rounded-lg text-xs font-bold">XÓA</button>
+              <button onClick={() => setConfirmDelete(false)} className="px-2 py-1 text-slate-300 bg-slate-600 rounded-lg text-xs">Hủy</button>
             </div>
           )}
         </div>
       </div>
-
+      
       <div className="mt-auto space-y-2 bg-slate-900/50 p-3 rounded-lg border border-slate-700/50">
         <div className="flex justify-between items-center">
           <div className="text-sm text-slate-400 truncate flex-grow">
-            MK:{' '}
-            <span className="text-slate-200 font-mono tracking-wider ml-1">
-              {showPassword ? item.password : '••••••••'}
-            </span>
+            MK: <span className="text-slate-200 font-mono tracking-wider ml-1">{showPassword ? item.password : '••••••••'}</span>
           </div>
           <div className="flex space-x-3 ml-2">
-            <button
-              onClick={() => setShowPassword(!showPassword)}
-              className="text-slate-500 hover:text-white"
-            >
-              {showPassword ? (
-                <EyeOff className="w-4 h-4" />
-              ) : (
-                <Eye className="w-4 h-4" />
-              )}
+            <button onClick={() => setShowPassword(!showPassword)} className="text-slate-500 hover:text-white">
+              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
-            <button
-              onClick={() => onCopy(item.password)}
-              className="text-slate-500 hover:text-blue-400"
-            >
+            <button onClick={() => onCopy(item.password)} className="text-slate-500 hover:text-blue-400">
               <Copy className="w-4 h-4" />
             </button>
           </div>
         </div>
-
+        
         <div className="flex justify-between items-center">
           <div className="text-sm text-slate-400 truncate flex-grow">
             TK: <span className="text-slate-200 ml-1">{item.username}</span>
           </div>
-          <button
-            onClick={() => onCopy(item.username)}
-            className="text-slate-500 hover:text-blue-400 ml-2"
-          >
+          <button onClick={() => onCopy(item.username)} className="text-slate-500 hover:text-blue-400 ml-2">
             <Copy className="w-4 h-4" />
           </button>
         </div>
@@ -765,9 +728,9 @@ function PasswordFormModal({ item, onClose, onSave, onCopy }) {
     username: item?.username || '',
     password: item?.password || '',
     url: item?.url || '',
-    notes: item?.notes || '',
+    notes: item?.notes || ''
   });
-
+  
   const [showGenerator, setShowGenerator] = useState(false);
 
   const handleSubmit = (e) => {
@@ -782,125 +745,53 @@ function PasswordFormModal({ item, onClose, onSave, onCopy }) {
           <h2 className="text-lg font-bold text-white">
             {item ? 'Sửa Mật khẩu' : 'Thêm Mới'}
           </h2>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-full bg-slate-700/50"
-          >
+          <button onClick={onClose} className="text-slate-400 hover:text-white p-1 rounded-full bg-slate-700/50">
             <X className="w-5 h-5" />
           </button>
         </div>
-
+        
         <div className="p-5 overflow-y-auto">
           {showGenerator ? (
             <div className="mb-5 p-4 bg-slate-900 rounded-xl border border-blue-500/30">
               <h3 className="text-sm font-semibold text-blue-400 mb-3 flex items-center">
                 <Shield className="w-4 h-4 mr-2" /> Tạo Mật khẩu an toàn
               </h3>
-              <PasswordGenerator
-                onApply={(pwd) => {
-                  setFormData({ ...formData, password: pwd });
-                  setShowGenerator(false);
-                }}
-                onCancel={() => setShowGenerator(false)}
-              />
+              <PasswordGenerator onApply={(pwd) => {setFormData({...formData, password: pwd}); setShowGenerator(false);}} onCancel={() => setShowGenerator(false)} />
             </div>
           ) : null}
 
           <form id="pwd-form" onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">
-                Tên trang web / App *
-              </label>
-              <input
-                type="text"
-                required
-                value={formData.title}
-                onChange={(e) =>
-                  setFormData({ ...formData, title: e.target.value })
-                }
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500"
-                placeholder="VD: Google, Facebook..."
-              />
+              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Tên trang web hoặc App *</label>
+              <input type="text" required value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500" placeholder="VD: Google, Facebook..." />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">
-                Tài khoản *
-              </label>
-              <input
-                type="text"
-                required
-                value={formData.username}
-                onChange={(e) =>
-                  setFormData({ ...formData, username: e.target.value })
-                }
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500"
-              />
+              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Tài khoản *</label>
+              <input type="text" required value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500" />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">
-                Mật khẩu *
-              </label>
+              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Mật khẩu *</label>
               <div className="flex space-x-2">
-                <input
-                  type="text"
-                  required
-                  value={formData.password}
-                  onChange={(e) =>
-                    setFormData({ ...formData, password: e.target.value })
-                  }
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500 font-mono text-lg"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowGenerator(!showGenerator)}
-                  className="px-3 bg-slate-700 text-slate-200 rounded-lg flex items-center justify-center"
-                >
+                <input type="text" required value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500 font-mono text-lg" />
+                <button type="button" onClick={() => setShowGenerator(!showGenerator)} className="px-3 bg-slate-700 text-slate-200 rounded-lg flex items-center justify-center">
                   <RefreshCw className="w-5 h-5" />
                 </button>
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">
-                URL (Tuỳ chọn)
-              </label>
-              <input
-                type="text"
-                value={formData.url}
-                onChange={(e) =>
-                  setFormData({ ...formData, url: e.target.value })
-                }
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                placeholder="https://"
-              />
+              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">URL (Tuỳ chọn)</label>
+              <input type="text" value={formData.url} onChange={e => setFormData({...formData, url: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500" placeholder="https://example.com" />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">
-                Ghi chú
-              </label>
-              <textarea
-                rows="2"
-                value={formData.notes}
-                onChange={(e) =>
-                  setFormData({ ...formData, notes: e.target.value })
-                }
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500 resize-none"
-              ></textarea>
+              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Ghi chú</label>
+              <textarea rows="2" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500 resize-none"></textarea>
             </div>
           </form>
         </div>
-
+        
         <div className="px-5 py-4 border-t border-slate-700 bg-slate-800 flex justify-end space-x-3 pb-safe">
-          <button
-            onClick={onClose}
-            className="px-5 py-2.5 text-slate-300 bg-slate-700 rounded-lg text-sm font-medium"
-          >
-            Hủy
-          </button>
-          <button
-            form="pwd-form"
-            type="submit"
-            className="px-5 py-2.5 bg-blue-600 text-white rounded-lg flex items-center text-sm font-medium"
-          >
+          <button onClick={onClose} className="px-5 py-2.5 text-slate-300 bg-slate-700 rounded-lg text-sm font-medium">Hủy</button>
+          <button form="pwd-form" type="submit" className="px-5 py-2.5 bg-blue-600 text-white rounded-lg flex items-center text-sm font-medium">
             <Save className="w-4 h-4 mr-2" /> Lưu Lại
           </button>
         </div>
@@ -929,94 +820,37 @@ function PasswordGenerator({ onApply, onCancel }) {
     const array = new Uint32Array(length);
     window.crypto.getRandomValues(array);
     let result = '';
-    for (let i = 0; i < length; i++)
-      result += charset[array[i] % charset.length];
+    for (let i = 0; i < length; i++) result += charset[array[i] % charset.length];
     setGenerated(result);
   };
 
-  useEffect(() => {
-    generatePassword();
-  }, [length, useUpper, useLower, useNumbers, useSymbols]);
+  useEffect(() => { generatePassword(); }, [length, useUpper, useLower, useNumbers, useSymbols]);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center space-x-2">
         <div className="flex-grow bg-slate-950 p-3 rounded-lg border border-slate-700 text-center font-mono text-lg text-emerald-400 break-all flex items-center justify-center">
-          {generated || 'Lỗi'}
+          {generated || "Lỗi"}
         </div>
-        <button
-          onClick={generatePassword}
-          className="p-3 bg-slate-700 text-white rounded-lg"
-        >
+        <button onClick={generatePassword} className="p-3 bg-slate-700 text-white rounded-lg">
           <RefreshCw className="w-5 h-5" />
         </button>
       </div>
       <div>
         <div className="flex justify-between text-sm text-slate-300 mb-1">
-          <span>Độ dài:</span>
-          <span className="font-bold text-white">{length}</span>
+          <span>Độ dài:</span><span className="font-bold text-white">{length}</span>
         </div>
-        <input
-          type="range"
-          min="8"
-          max="64"
-          value={length}
-          onChange={(e) => setLength(parseInt(e.target.value))}
-          className="w-full accent-blue-500"
-        />
+        <input type="range" min="8" max="64" value={length} onChange={(e) => setLength(parseInt(e.target.value))} className="w-full accent-blue-500" />
       </div>
       <div className="grid grid-cols-2 gap-3 text-sm">
-        <label className="flex items-center space-x-2">
-          <input
-            type="checkbox"
-            checked={useUpper}
-            onChange={(e) => setUseUpper(e.target.checked)}
-            className="rounded"
-          />
-          <span className="text-slate-300">A-Z</span>
-        </label>
-        <label className="flex items-center space-x-2">
-          <input
-            type="checkbox"
-            checked={useLower}
-            onChange={(e) => setUseLower(e.target.checked)}
-            className="rounded"
-          />
-          <span className="text-slate-300">a-z</span>
-        </label>
-        <label className="flex items-center space-x-2">
-          <input
-            type="checkbox"
-            checked={useNumbers}
-            onChange={(e) => setUseNumbers(e.target.checked)}
-            className="rounded"
-          />
-          <span className="text-slate-300">0-9</span>
-        </label>
-        <label className="flex items-center space-x-2">
-          <input
-            type="checkbox"
-            checked={useSymbols}
-            onChange={(e) => setUseSymbols(e.target.checked)}
-            className="rounded"
-          />
-          <span className="text-slate-300">!@#$</span>
-        </label>
+        <label className="flex items-center space-x-2"><input type="checkbox" checked={useUpper} onChange={(e) => setUseUpper(e.target.checked)} className="rounded" /><span className="text-slate-300">A-Z</span></label>
+        <label className="flex items-center space-x-2"><input type="checkbox" checked={useLower} onChange={(e) => setUseLower(e.target.checked)} className="rounded" /><span className="text-slate-300">a-z</span></label>
+        <label className="flex items-center space-x-2"><input type="checkbox" checked={useNumbers} onChange={(e) => setUseNumbers(e.target.checked)} className="rounded" /><span className="text-slate-300">0-9</span></label>
+        <label className="flex items-center space-x-2"><input type="checkbox" checked={useSymbols} onChange={(e) => setUseSymbols(e.target.checked)} className="rounded" /><span className="text-slate-300">!@#$</span></label>
       </div>
       <div className="flex space-x-2 pt-2">
-        <button
-          onClick={onCancel}
-          className="flex-1 py-2.5 bg-slate-800 text-slate-300 rounded-lg text-sm border border-slate-700"
-        >
-          Đóng
-        </button>
-        <button
-          disabled={!generated}
-          onClick={() => onApply(generated)}
-          className="flex-1 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-medium"
-        >
-          Dùng mã này
-        </button>
+        <button onClick={onCancel} className="flex-1 py-2.5 bg-slate-800 text-slate-300 rounded-lg text-sm border border-slate-700">Đóng</button>
+        <button disabled={!generated} onClick={() => onApply(generated)} className="flex-1 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-medium">Dùng mã này</button>
       </div>
     </div>
   );
