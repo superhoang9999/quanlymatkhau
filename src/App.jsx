@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { 
   Lock, Unlock, Shield, Key, Plus, Copy, Eye, EyeOff, 
   Trash2, Search, Check, AlertTriangle, RefreshCw, X, Save,
-  Cloud, LogOut, User, Loader2, Fingerprint, Download, Upload
+  Cloud, LogOut, User, Loader2, Fingerprint, Download, Upload, AlertOctagon, Mail,
+  FileText, ListFilter
 } from 'lucide-react';
 
 // --- FIREBASE SETUP ---
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
 
 // Cấu hình Firebase
 const firebaseConfig = {
@@ -96,20 +97,22 @@ export default function App() {
   
   const [masterPasswordInput, setMasterPasswordInput] = useState('');
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+  const [passwordHintInput, setPasswordHintInput] = useState(''); 
   const [authError, setAuthError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterType, setFilterType] = useState('all'); // 'all', 'password', 'note'
   
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [showHint, setShowHint] = useState(false);
 
   // --- TRẠNG THÁI SINH TRẮC HỌC (FACE ID / VÂN TAY) ---
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
   const [hasBiometricSaved, setHasBiometricSaved] = useState(!!localStorage.getItem('sv_biometric_pwd'));
 
   useEffect(() => {
-    // Kiểm tra xem thiết bị hiện tại có hỗ trợ nhận diện khuôn mặt/vân tay không
     if (window.PublicKeyCredential) {
       window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
         .then(available => setIsBiometricSupported(available));
@@ -129,10 +132,7 @@ export default function App() {
         timeout: 60000,
       };
       
-      // Gọi màn hình quét khuôn mặt/vân tay của điện thoại
       await navigator.credentials.create({ publicKey });
-      
-      // Nếu quét thành công, lưu mật khẩu vào LocalStorage (Được bảo vệ bởi lớp Sinh trắc học)
       localStorage.setItem('sv_biometric_pwd', masterPasswordInput);
       setHasBiometricSaved(true);
       showToast("Đã thiết lập Face ID/Vân tay thành công!");
@@ -151,10 +151,7 @@ export default function App() {
         userVerification: "required",
       };
       
-      // Gọi màn hình quét khuôn mặt/vân tay để xác thực
       await navigator.credentials.get({ publicKey });
-      
-      // Nếu đúng khuôn mặt, lấy mật khẩu chính đã lưu để giải mã
       const savedPwd = localStorage.getItem('sv_biometric_pwd');
       if (savedPwd) {
         await processUnlock(savedPwd);
@@ -166,7 +163,6 @@ export default function App() {
     }
   };
 
-  // Hàm xử lý giải mã được tách ra để tái sử dụng
   const processUnlock = async (password) => {
     if (!encryptedCloudData) throw new Error("No data");
     const salt = b642buf(encryptedCloudData.salt);
@@ -182,11 +178,10 @@ export default function App() {
     setMasterKey(key);
     setVault(decryptedVault);
     setAppState('READY');
-    setMasterPasswordInput(password); // Giữ lại password để có thể thiết lập Sinh trắc học
+    setMasterPasswordInput(password);
     showToast("Đã mở khóa!");
   };
 
-  // 1. Lắng nghe trạng thái đăng nhập Firebase
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser) {
@@ -200,7 +195,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Lắng nghe dữ liệu từ Firestore khi đã đăng nhập
   useEffect(() => {
     if (!user || appState === 'LOGIN' || appState === 'CHECKING_AUTH') return;
 
@@ -280,10 +274,37 @@ export default function App() {
     setVault([]);
     setAppState('UNLOCK');
     setMasterPasswordInput('');
+    setShowHint(false);
     showToast("Đã khóa kho an toàn.");
   };
 
-  // --- CHỨC NĂNG SAO LƯU & PHỤC HỒI ---
+  const handleResetVault = async () => {
+    if (!user) return;
+    
+    const confirmMessage = "CẢNH BÁO ĐỎ:\n\nBạn đang yêu cầu XÓA VĨNH VIỄN toàn bộ mật khẩu trên đám mây để thiết lập lại từ đầu do quên Mật khẩu chính.\n\nHành động này KHÔNG THỂ HOÀN TÁC.\nBạn có chắc chắn muốn tiếp tục?";
+    
+    if (window.confirm(confirmMessage)) {
+      const typeConfirm = window.prompt("Gõ chữ 'XOA' (viết hoa, không dấu) để xác nhận xóa toàn bộ dữ liệu:");
+      
+      if (typeConfirm === 'XOA') {
+        setIsSyncing(true);
+        try {
+          const docRef = getVaultDocRef(user.uid);
+          await deleteDoc(docRef);
+          setEncryptedCloudData(null);
+          setAppState('SETUP');
+          showToast("Đã xóa kho dữ liệu cũ. Hãy tạo Mật khẩu chính mới.");
+        } catch (error) {
+          showToast("Lỗi khi xóa dữ liệu trên đám mây.");
+        } finally {
+          setIsSyncing(false);
+        }
+      } else if (typeConfirm !== null) {
+        showToast("Xác nhận không đúng. Đã hủy thao tác xóa.");
+      }
+    }
+  };
+
   const exportBackup = () => {
     if (!encryptedCloudData) {
       showToast("Không có dữ liệu để sao lưu!");
@@ -298,6 +319,40 @@ export default function App() {
     linkElement.setAttribute('download', exportFileDefaultName);
     linkElement.click();
     showToast("Đã tải xuống file sao lưu an toàn!");
+  };
+
+  const shareBackup = async () => {
+    if (!encryptedCloudData) {
+      showToast("Không có dữ liệu để gửi!");
+      return;
+    }
+    const dataStr = JSON.stringify(encryptedCloudData);
+    const fileName = `SecureVault_Backup_${new Date().toISOString().split('T')[0]}.json`;
+
+    if (navigator.canShare) {
+      try {
+        const file = new File([dataStr], fileName, { type: 'application/json' });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: 'Bản sao lưu SecureVault',
+            text: 'Đây là bản sao lưu mã hóa kho mật khẩu SecureVault của bạn. Hãy lưu giữ cẩn thận!',
+          });
+          return;
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+
+    if (dataStr.length < 1500) {
+      const subject = encodeURIComponent("Bản sao lưu SecureVault");
+      const body = encodeURIComponent(`Đây là bản sao lưu mã hóa của bạn.\nNếu thiết bị không hỗ trợ file đính kèm, hãy lưu nội dung dưới đây thành file .json để phục hồi khi cần:\n\n${dataStr}`);
+      window.location.href = `mailto:${user?.email || ''}?subject=${subject}&body=${body}`;
+      showToast("Đã mở ứng dụng Email!");
+    } else {
+      showToast("Dữ liệu quá lớn để gửi trực tiếp. Vui lòng bấm 'Tải xuống' rồi tự đính kèm vào email!");
+    }
   };
 
   const handleImportBackup = async (event) => {
@@ -324,7 +379,7 @@ export default function App() {
         await setDoc(docRef, parsedData);
         
         showToast("Phục hồi thành công! Vui lòng mở khóa lại.");
-        handleLock(); // Bắt buộc người dùng nhập lại mật khẩu chính của bản backup để giải mã
+        handleLock();
       } catch (err) {
         showToast("Lỗi: File sao lưu không hợp lệ hoặc bị hỏng.");
       } finally {
@@ -335,7 +390,7 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  const saveVaultToCloud = async (newVault, currentKey, currentSalt) => {
+  const saveVaultToCloud = async (newVault, currentKey, currentSalt, setupHint = null) => {
     if (!user) return;
     setIsSyncing(true);
     try {
@@ -343,11 +398,13 @@ export default function App() {
       const activeSalt = currentSalt || vaultSalt;
 
       const { ciphertext, iv } = await encryptData(newVault, activeKey);
+      const hint = setupHint !== null ? setupHint : (encryptedCloudData?.hint || '');
 
       const storeData = {
         salt: buf2b64(activeSalt),
         iv: buf2b64(iv),
         data: buf2b64(ciphertext),
+        hint: hint,
         updatedAt: new Date().toISOString()
       };
 
@@ -382,11 +439,12 @@ export default function App() {
       setMasterKey(key);
       
       const initialVault = [];
-      await saveVaultToCloud(initialVault, key, salt);
+      await saveVaultToCloud(initialVault, key, salt, passwordHintInput);
       
       setAppState('READY');
       setMasterPasswordInput('');
       setConfirmPasswordInput('');
+      setPasswordHintInput('');
       setAuthError('');
       showToast("Khởi tạo thành công!");
     } catch (err) {
@@ -409,7 +467,7 @@ export default function App() {
     if (editingItem) {
       newVault = vault.map(v => v.id === item.id ? item : v);
     } else {
-      newVault = [...vault, { ...item, id: crypto.randomUUID() }];
+      newVault = [{ ...item, id: crypto.randomUUID() }, ...vault];
     }
     await saveVaultToCloud(newVault);
     setShowAddModal(false);
@@ -423,10 +481,20 @@ export default function App() {
     showToast("Đã xóa!");
   };
 
-  const filteredVault = vault.filter(item => 
-    item.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    item.username.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Lọc dữ liệu: Bao gồm từ khóa tìm kiếm và Loại (Mật khẩu / Ghi chú)
+  const filteredVault = vault.filter(item => {
+    const itemType = item.type || 'password'; // Tương thích dữ liệu cũ
+    
+    // Lọc theo Text
+    const matchesSearch = item.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          (item.username && item.username.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                          (itemType === 'note' && item.content && item.content.toLowerCase().includes(searchQuery.toLowerCase()));
+    
+    // Lọc theo Tab
+    const matchesType = filterType === 'all' || itemType === filterType;
+    
+    return matchesSearch && matchesType;
+  });
 
   // --- RENDER SCREENS ---
 
@@ -516,6 +584,15 @@ export default function App() {
               required
             />
             
+            <input 
+              type="text" 
+              value={passwordHintInput}
+              onChange={(e) => setPasswordHintInput(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+              placeholder="Gợi ý mật khẩu (Tùy chọn)"
+            />
+            <p className="text-xs text-slate-500 -mt-2 ml-1">Tuyệt đối không nhập nguyên mật khẩu vào ô gợi ý.</p>
+            
             {authError && <p className="text-red-400 text-sm text-center">{authError}</p>}
             
             <button 
@@ -569,6 +646,17 @@ export default function App() {
             
             {authError && <p className="text-red-400 text-sm text-center">{authError}</p>}
             
+            {showHint && (
+              <div className="bg-blue-500/10 border border-blue-500/30 p-3 rounded-lg mb-4 text-left animate-in fade-in slide-in-from-top-2 duration-300">
+                <p className="text-blue-400 text-sm font-medium flex items-center">
+                  💡 Gợi ý mật khẩu của bạn:
+                </p>
+                <p className="text-white text-sm mt-1 ml-5">
+                  {encryptedCloudData?.hint || "Bạn chưa cài đặt gợi ý cho mật khẩu này."}
+                </p>
+              </div>
+            )}
+            
             <div className="space-y-3">
               <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 px-4 rounded-lg flex items-center justify-center">
                 <Unlock className="w-4 h-4 mr-2" /> Giải mã
@@ -585,6 +673,28 @@ export default function App() {
               </button>
             </div>
           </form>
+
+          <div className="mt-6 pt-6 border-t border-slate-700 text-center flex flex-col space-y-4">
+            {!showHint ? (
+              <button 
+                type="button" 
+                onClick={() => setShowHint(true)}
+                className="text-sm text-slate-400 hover:text-white transition-colors inline-flex items-center justify-center"
+              >
+                Bạn quên mật khẩu chính?
+              </button>
+            ) : (
+              <button 
+                type="button" 
+                onClick={handleResetVault}
+                className="text-sm text-slate-500 hover:text-red-400 transition-colors inline-flex items-center justify-center"
+              >
+                <AlertOctagon className="w-4 h-4 mr-1.5" />
+                Vẫn không nhớ? Xóa toàn bộ kho dữ liệu
+              </button>
+            )}
+          </div>
+
         </div>
       </div>
     );
@@ -622,7 +732,10 @@ export default function App() {
                 </button>
               )}
 
-              {/* Nút Sao lưu & Phục hồi trên Desktop */}
+              {/* Nút Sao lưu, Gửi Email & Phục hồi trên Desktop */}
+              <button onClick={shareBackup} title="Gửi Backup qua Email" className="p-2 text-purple-400 hover:bg-slate-700 rounded-lg hidden sm:block">
+                <Mail className="w-5 h-5" />
+              </button>
               <button onClick={exportBackup} title="Tải file Sao lưu" className="p-2 text-blue-400 hover:bg-slate-700 rounded-lg hidden sm:block">
                 <Download className="w-5 h-5" />
               </button>
@@ -644,11 +757,29 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 max-w-6xl mx-auto px-4 py-6 w-full mb-20 md:mb-6">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl md:text-2xl font-bold text-white">Mật khẩu của bạn</h2>
+        <div className="flex justify-between items-end md:items-center mb-6">
+          <div className="flex flex-col md:flex-row md:items-center gap-4 w-full">
+            <h2 className="text-xl md:text-2xl font-bold text-white whitespace-nowrap">Kho lưu trữ</h2>
+            
+            {/* Filter Tabs */}
+            <div className="flex space-x-2 overflow-x-auto pb-1 md:pb-0 scrollbar-hide w-full md:w-auto">
+              <button onClick={() => setFilterType('all')} className={`px-4 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${filterType === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 border border-slate-700'}`}>
+                Tất cả
+              </button>
+              <button onClick={() => setFilterType('password')} className={`px-4 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${filterType === 'password' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 border border-slate-700'}`}>
+                Mật khẩu
+              </button>
+              <button onClick={() => setFilterType('note')} className={`px-4 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${filterType === 'note' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 border border-slate-700'}`}>
+                Ghi chú
+              </button>
+            </div>
+          </div>
           
-          <div className="flex space-x-2">
+          <div className="flex space-x-2 flex-shrink-0 mb-1 md:mb-0">
             {/* Nút Sao lưu & Phục hồi cho Mobile */}
+            <button onClick={shareBackup} title="Gửi Email" className="md:hidden flex bg-slate-800 text-purple-400 border border-purple-500/30 px-3 py-2 rounded-lg font-medium items-center">
+              <Mail className="w-5 h-5" />
+            </button>
             <button onClick={exportBackup} title="Sao lưu" className="md:hidden flex bg-slate-800 text-blue-400 border border-blue-500/30 px-3 py-2 rounded-lg font-medium items-center">
               <Download className="w-5 h-5" />
             </button>
@@ -675,7 +806,7 @@ export default function App() {
           <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
           <input 
             type="text" 
-            placeholder="Tìm kiếm tài khoản..." 
+            placeholder="Tìm kiếm..." 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="bg-slate-800 border border-slate-700 rounded-xl pl-10 pr-4 py-3 w-full focus:outline-none focus:border-blue-500 text-slate-200"
@@ -684,14 +815,14 @@ export default function App() {
 
         {filteredVault.length === 0 ? (
           <div className="text-center py-20 bg-slate-800/30 rounded-2xl border border-slate-700/50 border-dashed mt-4">
-            <Key className="w-12 h-12 mx-auto text-slate-600 mb-4" />
+            <ListFilter className="w-12 h-12 mx-auto text-slate-600 mb-4" />
             <h3 className="text-lg font-medium text-slate-300 mb-1">Trống</h3>
-            <p className="text-slate-500 text-sm">Chưa có dữ liệu nào được lưu.</p>
+            <p className="text-slate-500 text-sm">Chưa có dữ liệu nào phù hợp.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredVault.map(item => (
-              <PasswordCard 
+              <ItemCard 
                 key={item.id} 
                 item={item} 
                 onEdit={() => { setEditingItem(item); setShowAddModal(true); }}
@@ -713,7 +844,7 @@ export default function App() {
 
       {/* Modals & Toasts */}
       {showAddModal && (
-        <PasswordFormModal 
+        <ItemFormModal 
           item={editingItem}
           onClose={() => setShowAddModal(false)}
           onSave={handleSaveItem}
@@ -731,23 +862,24 @@ export default function App() {
   );
 }
 
-// --- THÀNH PHẦN HIỂN THỊ ITEM MẬT KHẨU ---
-function PasswordCard({ item, onEdit, onDelete, onCopy }) {
-  const [showPassword, setShowPassword] = useState(false);
+// --- THÀNH PHẦN HIỂN THỊ ITEM (MẬT KHẨU / GHI CHÚ) ---
+function ItemCard({ item, onEdit, onDelete, onCopy }) {
+  const [showData, setShowData] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const isNote = item.type === 'note';
   const initial = item.title ? item.title.charAt(0).toUpperCase() : '?';
 
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 hover:border-slate-500 transition-colors flex flex-col">
       <div className="flex justify-between items-start mb-4">
         <div className="flex items-center space-x-3 overflow-hidden">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
-            {initial}
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0 ${isNote ? 'bg-gradient-to-br from-emerald-500 to-teal-600' : 'bg-gradient-to-br from-blue-600 to-purple-600'}`}>
+            {isNote ? <FileText className="w-5 h-5" /> : initial}
           </div>
           <div className="truncate">
             <h3 className="font-semibold text-slate-100 truncate text-base">{item.title}</h3>
-            <p className="text-xs text-slate-400 truncate">{item.username}</p>
+            <p className="text-xs text-slate-400 truncate">{isNote ? 'Ghi chú bảo mật' : item.username}</p>
           </div>
         </div>
         <div className="flex space-x-1 ml-2">
@@ -768,64 +900,111 @@ function PasswordCard({ item, onEdit, onDelete, onCopy }) {
       </div>
       
       <div className="mt-auto space-y-2 bg-slate-900/50 p-3 rounded-lg border border-slate-700/50">
-        <div className="flex justify-between items-center">
-          <div className="text-sm text-slate-400 truncate flex-grow">
-            MK: <span className="text-slate-200 font-mono tracking-wider ml-1">{showPassword ? item.password : '••••••••'}</span>
+        {isNote ? (
+          // Giao diện hiển thị cho Ghi chú
+          <div className="flex justify-between items-start">
+            <div className="text-sm text-slate-400 flex-grow pr-2 overflow-hidden">
+              <span className={`text-slate-200 break-words whitespace-pre-wrap ${!showData ? 'tracking-widest' : 'line-clamp-3'}`}>
+                {showData ? item.content : '••••••••••••••••••••••••'}
+              </span>
+            </div>
+            <div className="flex space-x-3 flex-shrink-0 ml-2">
+              <button onClick={() => setShowData(!showData)} className="text-slate-500 hover:text-white" title={showData ? "Ẩn" : "Hiện"}>
+                {showData ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+              <button onClick={() => onCopy(item.content)} className="text-slate-500 hover:text-emerald-400" title="Sao chép nội dung">
+                <Copy className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-          <div className="flex space-x-3 ml-2">
-            <button onClick={() => setShowPassword(!showPassword)} className="text-slate-500 hover:text-white">
-              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-            <button onClick={() => onCopy(item.password)} className="text-slate-500 hover:text-blue-400">
-              <Copy className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-        
-        <div className="flex justify-between items-center">
-          <div className="text-sm text-slate-400 truncate flex-grow">
-            TK: <span className="text-slate-200 ml-1">{item.username}</span>
-          </div>
-          <button onClick={() => onCopy(item.username)} className="text-slate-500 hover:text-blue-400 ml-2">
-            <Copy className="w-4 h-4" />
-          </button>
-        </div>
+        ) : (
+          // Giao diện hiển thị cho Mật khẩu
+          <>
+            <div className="flex justify-between items-center">
+              <div className="text-sm text-slate-400 truncate flex-grow">
+                MK: <span className="text-slate-200 font-mono tracking-wider ml-1">{showData ? item.password : '••••••••'}</span>
+              </div>
+              <div className="flex space-x-3 ml-2">
+                <button onClick={() => setShowData(!showData)} className="text-slate-500 hover:text-white">
+                  {showData ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+                <button onClick={() => onCopy(item.password)} className="text-slate-500 hover:text-blue-400">
+                  <Copy className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="flex justify-between items-center">
+              <div className="text-sm text-slate-400 truncate flex-grow">
+                TK: <span className="text-slate-200 ml-1">{item.username}</span>
+              </div>
+              <button onClick={() => onCopy(item.username)} className="text-slate-500 hover:text-blue-400 ml-2">
+                <Copy className="w-4 h-4" />
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-// --- FORM THÊM / SỬA MẬT KHẨU (MODAL) ---
-function PasswordFormModal({ item, onClose, onSave, onCopy }) {
+// --- FORM THÊM / SỬA ITEM (MODAL) ---
+function ItemFormModal({ item, onClose, onSave, onCopy }) {
+  // Lấy type từ item cũ, nếu tạo mới thì mặc định là 'password'
+  const [itemType, setItemType] = useState(item?.type || 'password'); 
   const [formData, setFormData] = useState({
     title: item?.title || '',
     username: item?.username || '',
     password: item?.password || '',
     url: item?.url || '',
-    notes: item?.notes || ''
+    notes: item?.notes || '',
+    content: item?.content || '' // Trường nội dung dành riêng cho Ghi chú
   });
   
   const [showGenerator, setShowGenerator] = useState(false);
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSave({ ...item, ...formData });
+    onSave({ ...item, ...formData, type: itemType });
   };
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 z-50">
       <div className="bg-slate-800 sm:rounded-2xl rounded-t-2xl border border-slate-700 w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh] animate-slide-up sm:animate-none">
+        
+        {/* Header Modal */}
         <div className="px-5 py-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 sticky top-0 sm:rounded-t-2xl rounded-t-2xl">
           <h2 className="text-lg font-bold text-white">
-            {item ? 'Sửa Mật khẩu' : 'Thêm Mới'}
+            {item ? (item.type === 'note' ? 'Sửa Ghi chú' : 'Sửa Mật khẩu') : 'Thêm Mới'}
           </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white p-1 rounded-full bg-slate-700/50">
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Tab Switcher (Chỉ hiện khi tạo mới) */}
+        {!item && (
+          <div className="flex border-b border-slate-700 bg-slate-900/50 px-2 pt-2">
+            <button 
+              type="button" 
+              onClick={() => setItemType('password')} 
+              className={`flex-1 py-2.5 text-sm font-medium rounded-t-lg transition-colors ${itemType === 'password' ? 'bg-slate-800 text-blue-400 border-t border-x border-slate-700' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              Mật khẩu
+            </button>
+            <button 
+              type="button" 
+              onClick={() => setItemType('note')} 
+              className={`flex-1 py-2.5 text-sm font-medium rounded-t-lg transition-colors ${itemType === 'note' ? 'bg-slate-800 text-emerald-400 border-t border-x border-slate-700' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              Ghi chú bảo mật
+            </button>
+          </div>
+        )}
         
         <div className="p-5 overflow-y-auto">
-          {showGenerator ? (
+          {itemType === 'password' && showGenerator ? (
             <div className="mb-5 p-4 bg-slate-900 rounded-xl border border-blue-500/30">
               <h3 className="text-sm font-semibold text-blue-400 mb-3 flex items-center">
                 <Shield className="w-4 h-4 mr-2" /> Tạo Mật khẩu an toàn
@@ -834,38 +1013,66 @@ function PasswordFormModal({ item, onClose, onSave, onCopy }) {
             </div>
           ) : null}
 
-          <form id="pwd-form" onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Tên trang web hoặc App *</label>
-              <input type="text" required value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500" placeholder="VD: Google, Facebook..." />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Tài khoản *</label>
-              <input type="text" required value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Mật khẩu *</label>
-              <div className="flex space-x-2">
-                <input type="text" required value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500 font-mono text-lg" />
-                <button type="button" onClick={() => setShowGenerator(!showGenerator)} className="px-3 bg-slate-700 text-slate-200 rounded-lg flex items-center justify-center">
-                  <RefreshCw className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">URL (Tuỳ chọn)</label>
-              <input type="text" value={formData.url} onChange={e => setFormData({...formData, url: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500" placeholder="https://example.com" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Ghi chú</label>
-              <textarea rows="2" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500 resize-none"></textarea>
-            </div>
+          <form id="item-form" onSubmit={handleSubmit} className="space-y-4">
+            
+            {itemType === 'password' ? (
+              /* --- FORM MẬT KHẨU --- */
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Tên trang web hoặc App *</label>
+                  <input type="text" required value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500" placeholder="VD: Google, Facebook..." />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Tài khoản *</label>
+                  <input type="text" required value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Mật khẩu *</label>
+                  <div className="flex space-x-2">
+                    <input type="text" required value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-blue-500 font-mono text-lg" />
+                    <button type="button" onClick={() => setShowGenerator(!showGenerator)} className="px-3 bg-slate-700 text-slate-200 rounded-lg flex items-center justify-center hover:bg-slate-600 transition-colors">
+                      <RefreshCw className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">URL (Tuỳ chọn)</label>
+                  <input type="text" value={formData.url} onChange={e => setFormData({...formData, url: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500" placeholder="https://example.com" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Ghi chú thêm</label>
+                  <textarea rows="2" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500 resize-none"></textarea>
+                </div>
+              </>
+            ) : (
+              /* --- FORM GHI CHÚ BẢO MẬT --- */
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">Tiêu đề ghi chú *</label>
+                  <input type="text" required value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-emerald-500" placeholder="VD: Mã PIN Thẻ tín dụng, Recovery Phrase..." />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider flex justify-between">
+                    Nội dung bảo mật *
+                  </label>
+                  <textarea 
+                    required 
+                    rows="8" 
+                    value={formData.content} 
+                    onChange={e => setFormData({...formData, content: e.target.value})} 
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-white focus:outline-none focus:border-emerald-500 resize-none font-mono text-sm leading-relaxed" 
+                    placeholder="Nhập thông tin bí mật của bạn vào đây..."
+                  ></textarea>
+                </div>
+              </>
+            )}
+
           </form>
         </div>
         
         <div className="px-5 py-4 border-t border-slate-700 bg-slate-800 flex justify-end space-x-3 pb-safe">
-          <button onClick={onClose} className="px-5 py-2.5 text-slate-300 bg-slate-700 rounded-lg text-sm font-medium">Hủy</button>
-          <button form="pwd-form" type="submit" className="px-5 py-2.5 bg-blue-600 text-white rounded-lg flex items-center text-sm font-medium">
+          <button onClick={onClose} className="px-5 py-2.5 text-slate-300 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-colors">Hủy</button>
+          <button form="item-form" type="submit" className={`px-5 py-2.5 text-white rounded-lg flex items-center text-sm font-medium transition-colors shadow-lg ${itemType === 'note' ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-600/20'}`}>
             <Save className="w-4 h-4 mr-2" /> Lưu Lại
           </button>
         </div>
